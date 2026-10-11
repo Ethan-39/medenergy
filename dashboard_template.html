@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MedEnergy · 医院能耗预测与低碳调度</title>
+<style>
+:root{--ink:#172f36;--muted:#536b73;--green:#087f67;--line:#dce8e8;--paper:#f2f7f6;--blue:#2860bb;--gold:#b26b11}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:"Microsoft YaHei",system-ui,sans-serif;line-height:1.6}
+main{max-width:1160px;margin:auto;padding:32px 24px 48px}header{display:flex;justify-content:space-between;align-items:start;gap:20px}h1{font-size:30px;line-height:1.3;margin:0 0 8px}h2{font-size:18px;margin:0 0 12px}p{margin:8px 0}small,.muted{color:var(--muted)}.badge{display:inline-block;background:#d9ede7;border-radius:6px;padding:5px 12px;font-size:14px;white-space:nowrap}
+.panel{background:white;border:1px solid var(--line);border-radius:12px;padding:20px;margin-top:20px}.controls{display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px;align-items:center}.field label{display:block;margin-bottom:8px;font-size:14px}.field select{width:100%;padding:9px;border:1px solid #a6bebd;border-radius:6px;background:white;font:inherit;color:var(--ink)}input[type=range]{width:100%;accent-color:var(--green)}output{color:var(--green);font-weight:600}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:20px}.kpi{background:white;border:1px solid var(--line);border-radius:12px;padding:18px;min-width:0}.kpi .label{font-size:14px;color:var(--muted)}.kpi .value{font-size:27px;margin:8px 0 3px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.delta{font-size:13px;color:var(--green)}.delta.negative{color:#b14242}
+.forecast-meta{display:flex;gap:24px;flex-wrap:wrap;font-size:14px;margin-bottom:16px}.forecast-meta b{color:var(--ink);font-variant-numeric:tabular-nums}.legend{display:flex;flex-wrap:wrap;gap:18px;font-size:13px;margin-bottom:8px}.legend span{display:inline-flex;align-items:center;gap:7px}.swatch{height:3px;width:23px;display:inline-block}.chart-wrap{position:relative}canvas{display:block;width:100%;height:285px}.tooltip{position:absolute;z-index:2;pointer-events:none;display:none;max-width:210px;background:#173b3e;color:white;padding:8px 12px;border-radius:6px;font-size:12px;box-shadow:0 4px 15px #0002}.grid-note{display:flex;flex-wrap:wrap;gap:20px;font-size:14px;margin-top:12px}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{border-bottom:1px solid var(--line);text-align:left;padding:10px;white-space:nowrap}th{color:var(--muted);font-weight:500}.downloads{display:flex;gap:20px;flex-wrap:wrap;margin-top:16px}a{color:var(--green)}.note{font-size:13px;color:var(--muted)}.success{color:var(--green)}footer{font-size:13px;color:var(--muted);margin-top:20px}.step-line{font-size:14px;color:var(--muted);margin-bottom:0}
+@media(max-width:850px){.controls{grid-template-columns:1fr 1fr}.controls .field:first-child{grid-column:1/-1}.kpis{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:520px){main{padding:20px 12px}header{display:block}h1{font-size:24px}.badge{margin-top:8px}.controls{display:block}.field+.field{margin-top:20px}.kpis{gap:10px}.kpi{padding:12px}.kpi .value{font-size:23px}.panel{padding:14px}canvas{height:250px}.forecast-meta{gap:8px 20px}}
+</style>
+</head>
+<body>
+<main>
+  <header><div><h1>MedEnergy</h1><p>面向智慧医院的 AI 能耗预测与低碳调度</p><small id="scope"></small></div><span class="badge">仿真练习 · 可运行第一版</span></header>
+  <p class="step-line">预测明天的负荷 → 在任务窗口内安排灭菌批次 → 用模拟实测值评估费用和碳排</p>
+  <section class="panel controls" aria-label="调度参数">
+    <div class="field"><label for="day-select">查看日期（模拟历史日期）</label><select id="day-select"></select></div>
+    <div class="field"><label for="shift">允许任务前后移动 <output id="shift-value">4</output> 小时</label><input id="shift" type="range" min="0" max="6" step="0.25"><small>设为 0，可与固定排程完全对照。</small></div>
+    <div class="field"><label for="carbon-weight">碳排偏好 <output id="carbon-value">0.4</output> 元 / kg</label><input id="carbon-weight" type="range" min="0" max="2" step="0.1"><small>算法权重，数值越大越重视低碳。</small></div>
+  </section>
+  <section class="kpis" aria-label="当天调度结果" aria-live="polite">
+    <div class="kpi"><div class="label">当天购电费用</div><div class="value" id="cost"></div><div class="delta" id="cost-change"></div></div>
+    <div class="kpi"><div class="label">当天购电碳排</div><div class="value" id="carbon"></div><div class="delta" id="carbon-change"></div></div>
+    <div class="kpi"><div class="label">当天电网峰值</div><div class="value" id="peak"></div><div class="delta" id="peak-change"></div></div>
+    <div class="kpi"><div class="label">模拟批次按时完成</div><div class="value" id="tasks"></div><div class="delta" id="task-status"></div></div>
+  </section>
+  <section class="panel">
+    <h2>① 能耗预测：看曲线是否接近</h2>
+    <div class="forecast-meta"><span>测试集 MAE：<b id="mae"></b></span><span>测试集 RMSE：<b id="rmse"></b></span><span>“昨天同一时刻” MAE：<b id="naive"></b></span></div>
+    <div class="legend"><span><i class="swatch" style="background:#2860bb"></i>模拟实测总负荷</span><span><i class="swatch" style="background:#b26b11"></i>线性回归预测（虚线）</span></div>
+    <div class="chart-wrap"><canvas id="forecast-chart" role="img" aria-label="当天预测与模拟实测总功率曲线，横轴时间，纵轴千瓦"></canvas><div class="tooltip" id="forecast-tooltip" role="tooltip"></div></div>
+    <p class="note">MAE 是平均绝对误差，越小越好。以上误差统计整个测试集；曲线展示当前选中的一天。</p>
+  </section>
+  <section class="panel">
+    <h2>② 低碳调度：看购电时段怎样变化</h2>
+    <div class="legend"><span><i class="swatch" style="background:#71878e"></i>固定排程购电</span><span><i class="swatch" style="background:#087f67"></i>优化排程购电</span><span><i class="swatch" style="background:#b26b11"></i>模拟光伏出力（虚线）</span></div>
+    <div class="chart-wrap"><canvas id="schedule-chart" role="img" aria-label="固定排程与优化排程电网购电功率，以及光伏出力曲线"></canvas><div class="tooltip" id="schedule-tooltip" role="tooltip"></div></div>
+    <div class="grid-note"><span id="energy-check"></span><span id="pv-used"></span></div>
+    <p class="note">移峰保留完整任务量，设备总用电量相同；购电费用和碳排可以因用电时段及光伏利用率变化而降低。</p>
+  </section>
+  <section class="panel">
+    <h2>③ 具体任务：什么时候开始、何时完成</h2>
+    <div class="table-wrap"><table><thead><tr><th>模拟任务</th><th>功率 / 时长</th><th>固定排程</th><th>优化排程</th><th>可用窗口</th><th>约束检查</th></tr></thead><tbody id="task-table"></tbody></table></div>
+    <p class="note">MRI / CT 预约、病房固定负荷和空调按模拟原排程供电。本版只调整两个互不重叠窗口中的灭菌批次。</p>
+    <div class="downloads"><a href="data/hospital_energy.csv" download>下载 30 天仿真数据</a><a href="results/predictions.csv" download>下载预测结果</a><a href="results/schedules.csv" download>下载默认调度结果</a></div>
+    <p class="note">页面参数调整即时生效；CSV 文件保存的是运行 Python 时 config.json 中的默认参数结果。</p>
+  </section>
+  <footer>教学仿真：设备功率、任务窗口、电价、天气、光伏与碳因子均为模拟输入。预测采用模拟天气预报及计划占用率。结果用于学习和原型演示，真实医院参数和约束需要另行核实。</footer>
+</main>
+<script>
+'use strict';
+const DATA = __MEDENERGY_DATA__;
+const el = id => document.getElementById(id);
+const fmt = (value, digits = 1) => value.toLocaleString('zh-CN', {minimumFractionDigits: digits, maximumFractionDigits: digits});
+const time = slot => `${String(Math.floor(slot / 4)).padStart(2, '0')}:${String((slot % 4) * 15).padStart(2, '0')}`;
+const interval = (start, duration) => `${time(start)}–${time(start + duration)}`;
+let current;
+
+function taskLoad(tasks, starts) {
+  const load = Array(96).fill(0);
+  tasks.forEach((task, index) => {for (let slot = starts[index]; slot < starts[index] + task.duration; slot++) load[slot] += task.power_kw;});
+  return load;
+}
+function optimize(day, shiftHours, carbonWeight) {
+  const starts = [], load = Array(96).fill(0), shift = Math.round(shiftHours * 4);
+  day.tasks.forEach(task => {
+    const earliest = Math.max(task.release, task.baseline_start - shift);
+    const latest = Math.min(task.deadline - task.duration, task.baseline_start + shift);
+    let best = task.baseline_start, bestScore = Infinity, bestMovement = Infinity;
+    for (let start = earliest; start <= latest; start++) {
+      let score = 0;
+      for (let slot = start; slot < start + task.duration; slot++) {
+        const net = day.predicted_background[slot] + load[slot] - day.pv_forecast[slot];
+        score += (Math.max(0, net + task.power_kw) - Math.max(0, net)) * 0.25 * (day.tariff[slot] + carbonWeight * day.carbon[slot]);
+      }
+      const movement = Math.abs(start - task.baseline_start);
+      if (score < bestScore || (score === bestScore && movement < bestMovement)) {best = start; bestScore = score; bestMovement = movement;}
+    }
+    starts.push(best);
+    for (let slot = best; slot < best + task.duration; slot++) load[slot] += task.power_kw;
+  });
+  return {load, starts};
+}
+function evaluate(day, taskPower) {
+  const total = day.actual_background.map((value, i) => value + taskPower[i]);
+  const grid = total.map((value, i) => Math.max(0, value - day.pv_actual[i]));
+  return {
+    grid, total,
+    cost: grid.reduce((sum, value, i) => sum + value * day.tariff[i] * 0.25, 0),
+    carbon: grid.reduce((sum, value, i) => sum + value * day.carbon[i] * 0.25, 0),
+    peak: Math.max(...grid),
+    energy: total.reduce((sum, value) => sum + value * 0.25, 0),
+    usedPV: total.reduce((sum, value, i) => sum + Math.min(value, day.pv_actual[i]) * 0.25, 0)
+  };
+}
+function change(id, before, after, unit) {
+  const percent = before ? 100 * (before - after) / before : 0;
+  el(id).textContent = `固定排程 ${fmt(before)} ${unit} · ${percent >= 0 ? '减少' : '增加'} ${fmt(Math.abs(percent))}%`;
+  el(id).classList.toggle('negative', percent < -0.001);
+}
+function render() {
+  const day = DATA.days[Number(el('day-select').value)];
+  const shift = Number(el('shift').value), carbonWeight = Number(el('carbon-weight').value);
+  el('shift-value').textContent = shift;
+  el('carbon-value').textContent = carbonWeight.toFixed(1);
+  const plan = optimize(day, shift, carbonWeight);
+  const before = evaluate(day, taskLoad(day.tasks, day.tasks.map(task => task.baseline_start)));
+  const after = evaluate(day, plan.load);
+  const completed = day.tasks.filter((task, i) => plan.starts[i] >= task.release && plan.starts[i] + task.duration <= task.deadline).length;
+  el('cost').textContent = `¥ ${fmt(after.cost)}`;
+  el('carbon').textContent = `${fmt(after.carbon)} kg`;
+  el('peak').textContent = `${fmt(after.peak)} kW`;
+  change('cost-change', before.cost, after.cost, '元');
+  change('carbon-change', before.carbon, after.carbon, 'kg');
+  change('peak-change', before.peak, after.peak, 'kW');
+  el('tasks').textContent = day.tasks.length ? `${completed} / ${day.tasks.length}` : '当天无批次';
+  el('task-status').textContent = '任务量保留 · 截止时间合规';
+  el('energy-check').textContent = `设备总用电：${fmt(before.energy)} → ${fmt(after.energy)} kWh`;
+  el('pv-used').textContent = `光伏自用：${fmt(before.usedPV)} → ${fmt(after.usedPV)} kWh`;
+  el('task-table').innerHTML = day.tasks.length ? day.tasks.map((task, i) => `<tr><td>${task.name}</td><td>${task.power_kw} kW / ${task.duration * 15} 分钟</td><td>${interval(task.baseline_start, task.duration)}</td><td>${interval(plan.starts[i], task.duration)}</td><td>${time(task.release)}–${time(task.deadline)}</td><td class="success">按时完成</td></tr>`).join('') : '<tr><td colspan="6">周末情景：当天无模拟灭菌批次，购电排程与基线相同。</td></tr>';
+  current = {day, before, after, plan};
+  drawAll();
+  // Keep a read-only snapshot for checking consistency with the Python pipeline.
+  window.medenergyState = {date: day.date, starts: plan.starts, baseline: before, optimized: after, completed};
+}
+const plots = {};
+function draw(canvasId, tooltipId, series) {
+  const canvas = el(canvasId), box = canvas.getBoundingClientRect(), width = box.width, height = box.height;
+  if (!width) return;
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
+  const ctx = canvas.getContext('2d'); ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  const margin = {left: 53, right: 16, top: 28, bottom: 36};
+  const plotW = width - margin.left - margin.right, plotH = height - margin.top - margin.bottom;
+  const max = Math.ceil(Math.max(...series.flatMap(s => s.data)) / 50) * 50 || 50;
+  const x = slot => margin.left + slot / 96 * plotW;
+  const y = value => margin.top + plotH - value / max * plotH;
+  ctx.font = '12px "Microsoft YaHei", sans-serif'; ctx.fillStyle = '#536b73';
+  ctx.fillText('功率 (kW)', margin.left, 17);
+  ctx.strokeStyle = '#e4ecec';ctx.lineWidth = 1;
+  for (let tick = 0; tick <= 4; tick++) {
+    const value = tick / 4 * max, yy = y(value);
+    ctx.beginPath();ctx.moveTo(margin.left, yy);ctx.lineTo(width - margin.right, yy);ctx.stroke();
+    ctx.textAlign = 'right';ctx.fillText(value.toFixed(0), margin.left - 8, yy + 4);
+  }
+  ctx.textAlign = 'center';
+  const ticks = width < 500 ? [0, 32, 64, 96] : [0, 24, 48, 72, 96];
+  ticks.forEach(slot => {ctx.textAlign = slot === 0 ? 'left' : slot === 96 ? 'right' : 'center';ctx.fillText(time(slot), x(slot), height - 14);});
+  ctx.save();ctx.beginPath();ctx.rect(margin.left, margin.top, plotW, plotH);ctx.clip();
+  series.forEach(s => {
+    ctx.beginPath();ctx.strokeStyle = s.color;ctx.lineWidth = 2;ctx.setLineDash(s.dashed ? [6, 4] : []);
+    s.data.forEach((value, slot) => slot ? ctx.lineTo(x(slot), y(value)) : ctx.moveTo(x(slot), y(value)));
+    ctx.stroke();
+  });
+  ctx.restore();ctx.setLineDash([]);
+  plots[canvasId] = {width, margin, plotW, series};
+  const tip = el(tooltipId);
+  canvas.onpointermove = event => {
+    const bounds = canvas.getBoundingClientRect(), cursor = event.clientX - bounds.left;
+    const slot = Math.max(0, Math.min(95, Math.round((cursor - margin.left) / plotW * 96)));
+    tip.innerHTML = `<b>${time(slot)}</b><br>` + series.map(s => `${s.label}：${fmt(s.data[slot])} kW`).join('<br>');
+    tip.style.display = 'block';
+    tip.style.left = Math.max(0, Math.min(width - tip.offsetWidth, cursor + 12)) + 'px';
+    tip.style.top = '32px';
+  };
+  canvas.onpointerleave = () => {tip.style.display = 'none';};
+}
+function drawAll() {
+  if (!current) return;
+  draw('forecast-chart', 'forecast-tooltip', [
+    {label:'模拟实测', data:current.day.actual_total, color:'#2860bb'},
+    {label:'模型预测', data:current.day.predicted_total, color:'#b26b11', dashed:true}
+  ]);
+  draw('schedule-chart', 'schedule-tooltip', [
+    {label:'固定排程购电', data:current.before.grid, color:'#71878e'},
+    {label:'优化购电', data:current.after.grid, color:'#087f67'},
+    {label:'光伏出力', data:current.day.pv_actual, color:'#b26b11', dashed:true}
+  ]);
+}
+el('scope').textContent = `${DATA.config.days} 天仿真数据 · 15 分钟粒度 · 前 ${DATA.config.training_days} 天训练 / 后 ${DATA.days.length} 天测试`;
+el('mae').textContent = `${fmt(DATA.metrics.mae_kw, 2)} kW`;
+el('rmse').textContent = `${fmt(DATA.metrics.rmse_kw, 2)} kW`;
+el('naive').textContent = `${fmt(DATA.naive_metrics.mae_kw, 2)} kW`;
+DATA.days.forEach((day, index) => {const option = document.createElement('option');option.value = index;option.textContent = `${day.date} · ${day.tasks.length ? '工作日：2 个模拟批次' : '周末：无批次'}`;el('day-select').appendChild(option);});
+el('shift').value = DATA.config.max_shift_hours;
+el('carbon-weight').value = DATA.config.carbon_weight_yuan_per_kg;
+['day-select', 'shift', 'carbon-weight'].forEach(id => el(id).addEventListener('input', render));
+window.addEventListener('resize', drawAll);
+render();
+</script>
+</body>
+</html>

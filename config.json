@@ -1,0 +1,10 @@
+{
+  "days": 30,
+  "training_days": 24,
+  "seed": 17,
+  "pv_capacity_kw": 300,
+  "sterilizer_power_kw": 32,
+  "sterilizer_duration_minutes": 45,
+  "max_shift_hours": 4,
+  "carbon_weight_yuan_per_kg": 0.4
+}

@@ -1,0 +1,49 @@
+{
+  "data_type": "synthetic",
+  "forecast_type": "day-ahead, using simulated weather forecasts and planned occupancy",
+  "training_days": 24,
+  "test_days": 6,
+  "model": "linear regression with small ridge penalty",
+  "forecast_metrics": {
+    "mae_kw": 4.215665422843963,
+    "rmse_kw": 5.395286511905785
+  },
+  "yesterday_baseline_metrics": {
+    "mae_kw": 12.606628261833361,
+    "rmse_kw": 20.109830293281934
+  },
+  "baseline": {
+    "cost_yuan": 10373.146903775722,
+    "carbon_kg": 7738.368950245789,
+    "total_energy_kwh": 25540.069799820896,
+    "grid_energy_kwh": 15285.639200210748
+  },
+  "optimized": {
+    "cost_yuan": 10272.68654793304,
+    "carbon_kg": 7675.689192251218,
+    "total_energy_kwh": 25540.069799820896,
+    "grid_energy_kwh": 15233.181430444614
+  },
+  "tasks_completed": 8,
+  "task_constraint_violations": 0,
+  "energy_conservation_passed": true,
+  "model_coefficients": [
+    127.48971513096191,
+    54.92823832221399,
+    53.37010858982011,
+    39.836675408353415,
+    -0.06017572601190533,
+    0.187731541785067,
+    0.07441778341008076
+  ],
+  "config": {
+    "days": 30,
+    "training_days": 24,
+    "seed": 17,
+    "pv_capacity_kw": 300,
+    "sterilizer_power_kw": 32,
+    "sterilizer_duration_minutes": 45,
+    "max_shift_hours": 4,
+    "carbon_weight_yuan_per_kg": 0.4
+  }
+}
